@@ -8,6 +8,7 @@ skip-lint = false
 
 [programs.localnet]
 escrow = "9HVLYbuu3hYnvDxtvcww62Ubsd7AJbMKab4wR3rRDq6J"
+share_vault = "8JxKPoq7mLwbfjmqk12jPX2DvHSrcq5ncUuX7KENcRZY"
 q3_26_vault = "FJ3RsTGHZix7EyB9Mm4VxeTrumTxxfF1xzzkYpUk597X"
 
 [provider]
