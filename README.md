@@ -12,6 +12,8 @@ Built on the class vault starter [moses7054/anchor_vault_starter_q3_26](https://
 
 **44 tests pass** (12 vault, 18 escrow, 14 share vault). The full output is in [`test-output.txt`](test-output.txt).
 
+![All 44 tests passing](screenshots/tests-passing.png)
+
 **Why one workspace:** all programs share `anchor-lang` and `litesvm`, so the dependencies compile once into one `target/` folder. That matters on a low-memory machine.
 
 ## Run it
