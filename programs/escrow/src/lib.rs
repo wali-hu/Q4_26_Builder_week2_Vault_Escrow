@@ -37,8 +37,10 @@ pub mod escrow {
         ctx.accounts.release_vault_and_close()
     }
 
-    /// Maker cancels and gets the deposit back.
+    /// Returns the deposit to the maker and closes the offer. The maker can do it
+    /// any time; after the deadline anyone can.
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
+        ctx.accounts.check_caller()?;
         ctx.accounts.refund_and_close_vault()
     }
 

@@ -4,18 +4,26 @@ use anchor_spl::token_interface::{
     TransferChecked,
 };
 
-use crate::{state::Escrow, ESCROW_SEED};
+use crate::{error::EscrowError, state::Escrow, ESCROW_SEED};
 
+/// Refund rules:
+/// - Before the deadline only the maker can cancel.
+/// - After the deadline anyone can call it (a keeper, the taker, the maker), so an
+///   expired offer is never stuck. The tokens and the rent always go to the maker;
+///   the caller only pays the transaction fee.
 #[derive(Accounts)]
 pub struct Refund<'info> {
-    // Only the maker can cancel: the seeds use the signer's key and has_one
-    // checks it against the stored maker.
+    pub caller: Signer<'info>,
+
+    // Not a signer: anyone may refund after the deadline. Seeds + has_one make sure
+    // this is the maker stored in the escrow, so funds cannot be sent elsewhere.
     #[account(mut)]
-    pub maker: Signer<'info>,
+    pub maker: SystemAccount<'info>,
 
     #[account(mint::token_program = token_program)]
     pub mint_a: InterfaceAccount<'info, Mint>,
 
+    // Must be the maker's own ATA for mint_a: the tokens can only go back to the maker.
     #[account(
         mut,
         associated_token::mint = mint_a,
@@ -47,8 +55,16 @@ pub struct Refund<'info> {
 }
 
 impl<'info> Refund<'info> {
-    /// Allowed before and after the deadline: the maker can always get
-    /// their own tokens back while nobody has taken the offer.
+    pub fn check_caller(&self) -> Result<()> {
+        if self.caller.key() != self.escrow.maker {
+            require!(
+                Clock::get()?.unix_timestamp >= self.escrow.deadline,
+                EscrowError::OnlyMakerBeforeDeadline
+            );
+        }
+        Ok(())
+    }
+
     pub fn refund_and_close_vault(&mut self) -> Result<()> {
         let maker_key = self.maker.key();
         let seed_bytes = self.escrow.seed.to_le_bytes();

@@ -20,4 +20,7 @@ pub enum EscrowError {
     // 6005
     #[msg("The maker cannot take their own offer")]
     MakerCannotTake,
+    // 6006
+    #[msg("Only the maker can refund before the deadline")]
+    OnlyMakerBeforeDeadline,
 }

@@ -146,16 +146,18 @@ fn ix_take(w: &World, taker: Pubkey, mint_b: Pubkey, expected_receive: u64) -> I
     )
 }
 
-/// `signer` acts as the maker; the escrow is always the real maker's offer.
-fn ix_refund(w: &World, signer: Pubkey) -> Instruction {
-    let escrow = escrow_pda(&w.pid, &w.maker.pubkey(), SEED);
+/// `caller` signs; `maker` is the account passed as the maker. The escrow PDA is
+/// always derived from `maker`, like a client would do.
+fn ix_refund(w: &World, caller: Pubkey, maker: Pubkey) -> Instruction {
+    let escrow = escrow_pda(&w.pid, &maker, SEED);
     Instruction::new_with_bytes(
         w.pid,
         &::escrow::instruction::Refund {}.data(),
         ::escrow::accounts::Refund {
-            maker: signer,
+            caller,
+            maker,
             mint_a: w.mint_a,
-            maker_ata_a: get_associated_token_address(&signer, &w.mint_a),
+            maker_ata_a: get_associated_token_address(&maker, &w.mint_a),
             escrow,
             vault: get_associated_token_address(&escrow, &w.mint_a),
             token_program: anchor_spl::token::ID,
@@ -333,7 +335,7 @@ fn refund_returns_tokens_and_closes_escrow() {
     let vault = get_associated_token_address(&escrow, &w.mint_a);
 
     let maker = w.maker.insecure_clone();
-    let ix = ix_refund(&w, maker.pubkey());
+    let ix = ix_refund(&w, maker.pubkey(), maker.pubkey());
     send(&mut w.svm, &maker, ix).unwrap();
 
     assert_eq!(balance(&w.svm, &w.maker_ata_a), 1_000_000_000);
@@ -347,20 +349,58 @@ fn refund_still_works_after_deadline() {
     make_offer(&mut w, None);
     set_time(&mut w.svm, START_TS + 2 * ONE_DAY);
     let maker = w.maker.insecure_clone();
-    let ix = ix_refund(&w, maker.pubkey());
+    let ix = ix_refund(&w, maker.pubkey(), maker.pubkey());
     send(&mut w.svm, &maker, ix).unwrap();
     assert_eq!(balance(&w.svm, &w.maker_ata_a), 1_000_000_000);
 }
 
 #[test]
-fn refund_by_someone_else_fails_2006_constraint_seeds() {
+fn refund_by_someone_else_before_deadline_fails_6006() {
     let mut w = world();
     make_offer(&mut w, None);
-    // Taker signs as "maker" for the real maker's escrow. Seeds are derived from
-    // the signer, so they do not match the escrow address (seeds run before has_one).
+    let taker = w.taker.insecure_clone();
+    let ix = ix_refund(&w, taker.pubkey(), w.maker.pubkey());
+    assert_error(send(&mut w.svm, &taker, ix), 6006);
+}
+
+#[test]
+fn anyone_can_refund_after_deadline_and_tokens_go_to_maker() {
+    let mut w = world();
+    make_offer(&mut w, None);
+    let escrow = escrow_pda(&w.pid, &w.maker.pubkey(), SEED);
+    let maker_sol_before = w.svm.get_balance(&w.maker.pubkey()).unwrap();
+    let vault = get_associated_token_address(&escrow, &w.mint_a);
+    let rent_back = w.svm.get_balance(&escrow).unwrap() + w.svm.get_balance(&vault).unwrap();
+
+    set_time(&mut w.svm, START_TS + ONE_DAY);
+    let keeper = Keypair::new();
+    w.svm.airdrop(&keeper.pubkey(), 1_000_000_000).unwrap();
+    let ix = ix_refund(&w, keeper.pubkey(), w.maker.pubkey());
+    send(&mut w.svm, &keeper, ix).unwrap();
+
+    assert_eq!(balance(&w.svm, &w.maker_ata_a), 1_000_000_000, "all A back to the maker");
+    assert!(!exists(&w.svm, &escrow));
+    assert_eq!(
+        w.svm.get_balance(&w.maker.pubkey()).unwrap(),
+        maker_sol_before + rent_back,
+        "rent to the maker, the keeper only paid the fee"
+    );
+}
+
+#[test]
+fn refund_claiming_to_be_the_maker_fails_2006_constraint_seeds() {
+    let mut w = world();
+    make_offer(&mut w, None);
+    // After the deadline, an attacker passes themselves as "maker" with the real
+    // escrow, hoping to receive the tokens. Seeds from the fake maker do not match.
+    set_time(&mut w.svm, START_TS + ONE_DAY);
     let taker = w.taker.insecure_clone();
     CreateAssociatedTokenAccount::new(&mut w.svm, &taker, &w.mint_a).send().unwrap();
-    let ix = ix_refund(&w, taker.pubkey());
+    let real_escrow = escrow_pda(&w.pid, &w.maker.pubkey(), SEED);
+    let mut ix = ix_refund(&w, taker.pubkey(), taker.pubkey());
+    // point the escrow and vault metas at the real offer
+    ix.accounts[4].pubkey = real_escrow;
+    ix.accounts[5].pubkey = get_associated_token_address(&real_escrow, &w.mint_a);
     assert_error(send(&mut w.svm, &taker, ix), 2006);
 }
 

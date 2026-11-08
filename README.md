@@ -5,11 +5,11 @@ One Anchor workspace with two programs:
 | Program | What it does | Program ID |
 |---|---|---|
 | `q3_26_vault` | Each user gets a personal SOL vault: initialize, deposit, withdraw, close | `FJ3RsTGHZix7EyB9Mm4VxeTrumTxxfF1xzzkYpUk597X` |
-| `escrow` | Trustless token swap: make, take, refund, update, with a deadline (Clock sysvar) and an optional designated taker | `9HVLYbuu3hYnvDxtvcww62Ubsd7AJbMKab4wR3rRDq6J` |
+| `escrow` | Trustless token swap: make, take, refund, update, with a deadline (Clock sysvar), an optional designated taker, and refund by anyone after the deadline | `9HVLYbuu3hYnvDxtvcww62Ubsd7AJbMKab4wR3rRDq6J` |
 
 Built on the class vault starter [moses7054/anchor_vault_starter_q3_26](https://github.com/moses7054/anchor_vault_starter_q3_26) for the Turbin3 Q4 2026 Builders Cohort. The escrow was written from scratch, using [belivenn/anchor-escrow-q2-2026](https://github.com/belivenn/anchor-escrow-q2-2026) as a pattern reference.
 
-**28 tests pass** (12 vault, 16 escrow). The full output is in [`test-output.txt`](test-output.txt).
+**30 tests pass** (12 vault, 18 escrow). The full output is in [`test-output.txt`](test-output.txt).
 
 **Why one workspace:** both programs share `anchor-lang` and `litesvm`, so the dependencies compile once into one `target/` folder. That matters on a low-memory machine.
 
@@ -63,7 +63,7 @@ The user's key is a seed of both PDAs. So each user has exactly one vault, and n
 
 ## 2. Escrow
 
-The maker deposits token A and asks for an amount of token B. Anyone (or one named taker) can accept before the deadline: they pay B to the maker and receive the A. The maker can cancel at any time and get A back.
+The maker deposits token A and asks for an amount of token B. Anyone (or one named taker) can accept before the deadline: they pay B to the maker and receive the A. The maker can cancel at any time and get A back; after the deadline anyone can trigger that refund, and the tokens still go to the maker.
 
 ### Accounts and seeds
 
@@ -95,7 +95,7 @@ The token accounts use `token_interface` (`InterfaceAccount`, `Interface<TokenIn
 |---|---|---|---|
 | `make(seed, deposit, receive, deadline, taker)` | maker | creates `escrow` and its `vault`, moves `deposit` of A from the maker into the vault | `receive > 0`, `deposit > 0` (6000); `deadline` in the future (6001) |
 | `take(expected_receive)` | taker | taker pays `receive` of B to the maker; the vault sends all A to the taker; the vault and escrow are closed and their rent goes to the maker | before the deadline (6002); designated taker only, if set (6003); `expected_receive == receive` (6004); `has_one` maker, mint_a, mint_b (2001); taker is not the maker (2040 from Anchor, 6005 as backup) |
-| `refund` | maker | the vault returns all A to the maker; the vault and escrow are closed | seeds use the signer's key (2006) and `has_one = maker`; allowed before and after the deadline |
+| `refund` | maker any time; anyone after the deadline | the vault returns all A to the maker's ATA; the vault and escrow are closed and their rent goes to the maker; the caller only pays the fee | before the deadline a non-maker caller fails (6006); `maker` must be the stored maker (seeds 2006, `has_one`) and `maker_ata_a` must be the maker's ATA, so funds cannot be redirected |
 | `update(new_receive, new_deadline)` | maker | changes the price and the deadline of an open offer | seeds and `has_one` (2006); offer still open (6002); `new_receive > 0` (6000); `new_deadline` in the future (6001) |
 
 ### What `update` may change, and who
@@ -110,7 +110,7 @@ The token accounts use `token_interface` (`InterfaceAccount`, `Interface<TokenIn
 
 - **Deadline:** `Clock::get()?.unix_timestamp < deadline` in `take` and `update`. The tests move time with `svm.set_sysvar::<Clock>()`.
 - **Signature condition:** the optional `taker: Option<Pubkey>`. If it is set, `take` requires that exact wallet's signature (6003).
-- Refund is always allowed, so tokens can never be stuck after the deadline.
+- **Refund after the deadline is permissionless:** anyone (a keeper, the taker) can close an expired offer. Tokens and rent always go to the maker, so an expired offer is never stuck, even if the maker is offline. Before the deadline only the maker can cancel (6006).
 
 ### State over time
 
@@ -131,8 +131,9 @@ The token accounts use `token_interface` (`InterfaceAccount`, `Interface<TokenIn
 | 6003 | NotDesignatedTaker | take |
 | 6004 | TermsChanged | take |
 | 6005 | MakerCannotTake | take (backup to Anchor's 2040) |
+| 6006 | OnlyMakerBeforeDeadline | refund by a non-maker before the deadline |
 | 2001 | ConstraintHasOne | wrong mint or maker passed |
-| 2006 | ConstraintSeeds | someone other than the maker signs refund or update |
+| 2006 | ConstraintSeeds | someone other than the maker signs update, or passes a fake maker to refund |
 | 2040 | ConstraintDuplicateMutableAccount | maker tries to take their own offer |
 
 ---
@@ -141,9 +142,9 @@ The token accounts use `token_interface` (`InterfaceAccount`, `Interface<TokenIn
 
 Every instruction has a success test with exact balance assertions, and every failure test asserts the exact error number.
 
-| Vault (12) | Escrow (16) |
+| Vault (12) | Escrow (18) |
 |---|---|
-| full lifecycle with exact lamports; withdraw down to the rent minimum; withdraw the full balance to 0, then close; re-initialize after close; zero deposit/withdraw (6000); withdraw more than the balance (6001); withdraw that leaves dust below rent (6002); another user's withdraw or close (2006); initialize twice (System error 0); withdraw after close (3012) | make stores terms and locks tokens; take swaps and closes; refund returns and closes; refund after the deadline; update then take at the new price after the old deadline; past deadline on make (6001); zero amounts (6000); take after the deadline (6002); designated taker (6003, then success); stale price (6004); wrong mint_b (2001); maker takes own offer (2040); refund or update by someone else (2006); update after the deadline (6002); bad update values (6000, 6001) |
+| full lifecycle with exact lamports; withdraw down to the rent minimum; withdraw the full balance to 0, then close; re-initialize after close; zero deposit/withdraw (6000); withdraw more than the balance (6001); withdraw that leaves dust below rent (6002); another user's withdraw or close (2006); initialize twice (System error 0); withdraw after close (3012) | make stores terms and locks tokens; take swaps and closes; refund returns and closes; refund by the maker after the deadline; anyone refunds after the deadline and the maker gets tokens and rent; refund by a non-maker before the deadline (6006); fake maker on refund (2006); update then take at the new price after the old deadline; past deadline on make (6001); zero amounts (6000); take after the deadline (6002); designated taker (6003, then success); stale price (6004); wrong mint_b (2001); maker takes own offer (2040); update by someone else (2006); update after the deadline (6002); bad update values (6000, 6001) |
 
 ## Security notes
 
