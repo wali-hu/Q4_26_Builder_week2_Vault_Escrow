@@ -1,0 +1,48 @@
+     Running unittests src/lib.rs (target/debug/deps/escrow-3b169aeacf7c5a19)
+running 1 test
+test test_id ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/test_escrow.rs (target/debug/deps/test_escrow-642ce603572fda62)
+running 16 tests
+test make_with_past_deadline_fails_6001_invalid_deadline ... ok
+test make_locks_tokens_and_stores_terms ... ok
+test make_with_zero_amounts_fails_6000_invalid_amount ... ok
+test maker_cannot_take_own_offer_fails_2040_duplicate_mutable_account ... ok
+test refund_by_someone_else_fails_2006_constraint_seeds ... ok
+test only_designated_taker_can_take ... ok
+test refund_still_works_after_deadline ... ok
+test refund_returns_tokens_and_closes_escrow ... ok
+test take_after_deadline_fails_6002_escrow_expired ... ok
+test take_swaps_tokens_and_closes_escrow ... ok
+test take_with_stale_price_fails_6004_terms_changed ... ok
+test take_with_wrong_mint_b_fails_2001_has_one ... ok
+test update_after_deadline_fails_6002_escrow_expired ... ok
+test update_by_someone_else_fails_2006_constraint_seeds ... ok
+test update_changes_price_and_deadline_then_take_uses_new_price ... ok
+test update_with_bad_values_fails_6000_and_6001 ... ok
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.36s
+     Running unittests src/lib.rs (target/debug/deps/q3_26_vault-c1ba747918dfe54d)
+running 1 test
+test test_id ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/test_vault.rs (target/debug/deps/test_vault-6ca03b7127f576fc)
+running 12 tests
+test can_reinitialize_after_close ... ok
+test close_someone_elses_vault_fails_2006_constraint_seeds ... ok
+test deposit_zero_fails_6000_invalid_amount ... ok
+test full_lifecycle_initialize_deposit_withdraw_close ... ok
+test initialize_twice_fails_account_already_in_use ... ok
+test partial_withdraw_leaving_dust_below_rent_fails_6002_would_break_rent ... ok
+test withdraw_down_to_rent_minimum_works ... ok
+test withdraw_after_close_fails_3012_account_not_initialized ... ok
+test withdraw_from_someone_elses_vault_fails_2006_constraint_seeds ... ok
+test withdraw_full_balance_leaves_vault_at_zero_then_close_works ... ok
+test withdraw_zero_fails_6000_invalid_amount ... ok
+test withdraw_more_than_balance_fails_6001_insufficient_funds ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.97s
+   Doc-tests escrow
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests q3_26_vault
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
