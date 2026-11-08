@@ -1,23 +1,24 @@
-# Turbin3 Week 2: SOL Vault + Token Escrow (Anchor 1.1.2, LiteSVM)
+# Turbin3 Week 2: SOL Vault, Token Escrow and a Non-Custodial Share Vault (Anchor 1.1.2, LiteSVM)
 
-One Anchor workspace with two programs:
+One Anchor workspace with three programs:
 
 | Program | What it does | Program ID |
 |---|---|---|
 | `q3_26_vault` | Each user gets a personal SOL vault: initialize, deposit, withdraw, close | `FJ3RsTGHZix7EyB9Mm4VxeTrumTxxfF1xzzkYpUk597X` |
 | `escrow` | Trustless token swap: make, take, refund, update, with a deadline (Clock sysvar), an optional designated taker, and refund by anyone after the deadline | `9HVLYbuu3hYnvDxtvcww62Ubsd7AJbMKab4wR3rRDq6J` |
+| `share_vault` | Advanced extension: non-custodial share vault. Cash withdraw when liquid, in-kind redemption any time, even with zero liquidity | `8JxKPoq7mLwbfjmqk12jPX2DvHSrcq5ncUuX7KENcRZY` |
 
 Built on the class vault starter [moses7054/anchor_vault_starter_q3_26](https://github.com/moses7054/anchor_vault_starter_q3_26) for the Turbin3 Q4 2026 Builders Cohort. The escrow was written from scratch, using [belivenn/anchor-escrow-q2-2026](https://github.com/belivenn/anchor-escrow-q2-2026) as a pattern reference.
 
-**30 tests pass** (12 vault, 18 escrow). The full output is in [`test-output.txt`](test-output.txt).
+**44 tests pass** (12 vault, 18 escrow, 14 share vault). The full output is in [`test-output.txt`](test-output.txt).
 
-**Why one workspace:** both programs share `anchor-lang` and `litesvm`, so the dependencies compile once into one `target/` folder. That matters on a low-memory machine.
+**Why one workspace:** all programs share `anchor-lang` and `litesvm`, so the dependencies compile once into one `target/` folder. That matters on a low-memory machine.
 
 ## Run it
 
 ```bash
 # Rust 1.89.0 (pinned in rust-toolchain.toml), Anchor CLI 1.1.2, Solana CLI 3.0.13
-anchor build              # builds both .so files into target/deploy/
+anchor build              # builds all three .so files into target/deploy/
 cargo test                # runs every LiteSVM test against those .so files
 cargo test -p escrow      # one program only
 ```
@@ -138,6 +139,53 @@ The token accounts use `token_interface` (`InterfaceAccount`, `Interface<TokenIn
 
 ---
 
+## 3. Share vault (advanced extension, task 5)
+
+**Goal:** a vault that is non-custodial and that a user can always exit, even when all of its liquidity is deployed into a market position.
+
+The vault holds two reserves: idle **asset** (for example USDC) and **position** tokens (the receipt of an underlying market position, for example an LP or lending token). Users own the vault through **shares**, an SPL mint whose only mint authority is the vault PDA.
+
+### Accounts and seeds
+
+| Account | Seeds / address | Notes |
+|---|---|---|
+| `vault` (`ShareVault`) | `["vault", manager]` | stores manager, asset_mint, position_mint, share_mint, bumps |
+| `share_mint` | `["shares", vault]` | decimals = asset decimals, mint authority = vault PDA |
+| `asset_reserve`, `position_reserve` | ATAs of the vault | token authority = vault PDA |
+
+### Instructions
+
+| Instruction | Signer | What happens | Checks |
+|---|---|---|---|
+| `initialize` | manager | creates the vault, the share mint and both reserves | `init` |
+| `deposit(amount)` | user | asset in, shares out: 1:1 first, then `amount * supply / total_value` (priced before the deposit lands) | `amount > 0` (6000), not rounding to 0 (6002) |
+| `deploy(amount)` | manager **and** market | atomic 1:1 swap: the market sends position tokens in, the vault sends asset to the market | `has_one = manager` and seeds (2006); enough idle asset (6001) |
+| `withdraw(shares)` | user | cash exit: burns shares, pays `shares * total_value / supply` in asset | enough idle asset, else 6001 `NotEnoughLiquidity` |
+| `redeem_in_kind(shares)` | user | burns shares, pays the same fraction of **every** reserve (asset and position tokens) | `shares > 0` (6000); the Token program refuses to burn more shares than the user has |
+
+### Why it is non-custodial and always exitable
+
+- **The manager cannot take funds.** The only manager instruction is `deploy`, which must deliver the configured position token into the vault in the same transaction as the asset leaves (both legs or neither). There is no admin withdraw, no pause, and no instruction that can block a redemption.
+- **`redeem_in_kind` needs nothing from anyone.** It needs no price, no manager signature and no idle liquidity: the user receives `shares / supply` of each reserve. When everything is deployed, the user simply receives position tokens (the underlying market position) instead of cash.
+- **Rounding always favours the vault** (`mul_div` rounds down in u128), so no user can extract more than their share.
+
+### Assumptions and limits (stated, not hidden)
+
+- Pricing for `deposit` and `withdraw` treats one position token as worth one asset (a receipt at par). A real vault would read the market's exchange rate or an oracle. `redeem_in_kind` does not depend on this price at all.
+- The market is a signer in `deploy`. In production this would be a CPI into a lending or LP program.
+- A first-depositor "donation" attack (inflating the share price with a direct transfer) is not mitigated here; real vaults use a minimum first deposit or virtual shares.
+
+### State over time (from the tests)
+
+| Step | idle asset | position | share supply | note |
+|---|---|---|---|---|
+| Alice deposits 100, Bob 50 | 150 | 0 | 150 | 1:1 shares |
+| manager deploys 150 | 0 | 150 | 150 | cash withdraw now fails (6001) |
+| Alice redeems 100 in kind | 0 | 50 | 50 | Alice receives 100 position tokens |
+| Bob redeems 50 in kind | 0 | 0 | 0 | vault empty, everyone exited |
+
+---
+
 ## Tests (LiteSVM, Rust)
 
 Every instruction has a success test with exact balance assertions, and every failure test asserts the exact error number.
@@ -145,6 +193,8 @@ Every instruction has a success test with exact balance assertions, and every fa
 | Vault (12) | Escrow (18) |
 |---|---|
 | full lifecycle with exact lamports; withdraw down to the rent minimum; withdraw the full balance to 0, then close; re-initialize after close; zero deposit/withdraw (6000); withdraw more than the balance (6001); withdraw that leaves dust below rent (6002); another user's withdraw or close (2006); initialize twice (System error 0); withdraw after close (3012) | make stores terms and locks tokens; take swaps and closes; refund returns and closes; refund by the maker after the deadline; anyone refunds after the deadline and the maker gets tokens and rent; refund by a non-maker before the deadline (6006); fake maker on refund (2006); update then take at the new price after the old deadline; past deadline on make (6001); zero amounts (6000); take after the deadline (6002); designated taker (6003, then success); stale price (6004); wrong mint_b (2001); maker takes own offer (2040); update by someone else (2006); update after the deadline (6002); bad update values (6000, 6001) |
+
+Share vault (14): initialize (share mint authority is the vault PDA); 1:1 then pro-rata deposits, also after a deploy; zero deposit (6000); deploy swaps 1:1 and the manager receives nothing; deploy by a non-manager (2006); deploy more than idle (6001); cash withdraw while liquid; cash withdraw with no liquidity (6001); withdraw using someone else's shares (2015 ConstraintTokenOwner); redeem in kind with zero liquidity; pro-rata slice of both reserves; everyone exits and the vault ends empty; redeem more shares than owned (Token error 1); zero redeem (6000).
 
 ## Security notes
 
