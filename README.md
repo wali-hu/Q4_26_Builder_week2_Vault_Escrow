@@ -38,7 +38,7 @@ The tests load the compiled `.so` from `target/deploy/`, so run `anchor build` f
 | `vault_state` | `Account<VaultState>`, owned by the vault program | `["state", user]` | `vault_bump`, `state_bump` (8-byte discriminator + 2 bytes = 10 bytes) |
 | `vault` | `SystemAccount`, owned by the System Program | `["vault", user]` | the user's SOL, no data |
 
-The user's key is a seed of both PDAs. So each user has exactly one vault, and nobody else can derive or pass it: the address would not match (error 2006 `ConstraintSeeds`).
+The user's key is a seed of both PDAs, so each user has exactly one vault. The address is public: anyone can derive it from the user's public key. The protection is that the program derives the seeds from the **signer**. An attacker who signs as themselves gets their own PDA, so passing the victim's vault fails the seeds check (error 2006 `ConstraintSeeds`).
 
 ### Instructions
 
